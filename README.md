@@ -1,74 +1,104 @@
-# Fraud Detection Model for Transaction Monitoring
+# Fraud Detection System
 
-This repository contains a production-ready fraud detection system designed to maximize fraud value captured within operational capacity constraints.
+[![CI](https://github.com/dsugurtuna/fraud-detection-system/actions/workflows/ci.yml/badge.svg)](https://github.com/dsugurtuna/fraud-detection-system/actions/workflows/ci.yml)
 
-## Overview
+**Value-weighted transaction fraud detection with CatBoost, isotonic calibration, and expected-value ranking.**
 
-Traditional fraud detection models often optimize for ROC-AUC or Precision-Recall, which treats all fraud cases equally. In reality, missing a high-value fraud case is far more costly than missing a low-value one.
+Traditional fraud detection models optimise for ROC-AUC or precision–recall, treating all fraud cases equally. In practice, missing a high-value fraud case is far more costly than missing a low-value one. This system implements **value-weighted learning** combined with **expected-value ranking** to align predictions directly with business impact (money saved).
 
-This system implements a **Value-Weighted Learning** approach combined with **Expected Value Ranking** to align the model's predictions with business impact (money saved).
+> **Portfolio project.** Uses obfuscated synthetic transaction data. No real financial records are included.
 
-## Key Features
+---
 
-- **Value-Weighted Learning**: The model is trained with a custom loss function that penalizes missing high-value fraud more than low-value fraud.
-- **Temporal Validation**: Strict time-based splitting (Train/Validation/Test) ensures no data leakage and realistic performance estimation.
-- **Risk-Based Feature Engineering**: Includes smoothed risk encodings for high-cardinality categorical features (Merchant, MCC, Country).
-- **Isotonic Calibration**: Calibrates raw model scores to true probabilities for accurate expected value calculations.
-- **Automated Reporting**: Generates a PowerPoint presentation and visualization plots summarizing business impact.
+## Architecture
 
-## Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/fraud-detection-model.git
-   cd fraud-detection-model
-   ```
-
-2. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-## Data
-
-The model uses the included dataset:
-- `transactions_obf.csv`: Transaction details (amount, time, merchant info, etc.)
-- `labels_obf.csv`: Fraud labels (eventId, isFraud)
-
-## Usage
-
-### Basic Run
-Run the model with default settings (assumes CSVs are in the current directory):
-```bash
-python Fraud_detection.py
+```
+src/fraud_detection/
+    __init__.py          # Public API exports
+    features.py          # Temporal, aggregate, risk, and velocity features
+    model.py             # CatBoost classifier + regressor, isotonic calibration
+    evaluation.py        # Business metrics, EV curve, uplift calculation
+tests/
+    test_features.py     # Feature engineering tests
+    test_evaluation.py   # Business evaluator tests
+legacy/
+    Fraud_detection.py   # Original monolithic script (1,200+ lines)
+data/
+    transactions_obf.csv # Obfuscated transaction data
+    labels_obf.csv       # Fraud labels
 ```
 
-### Custom Configuration
-You can customize the data path, date splits, and review capacity:
+---
+
+## Quick start
 
 ```bash
-python Fraud_detection.py \
-  --data-dir ./data \
-  --val-start 2017-09-01 \
-  --test-start 2017-11-01 \
-  --capacity 500
+pip install -e ".[dev]"
+pytest -v
 ```
 
-### Arguments
-- `--data-dir`: Directory containing input CSVs (default: current dir)
-- `--output-dir`: Directory for results (default: `model_outputs`)
-- `--capacity`: Monthly review capacity for business metrics (default: 400)
-- `--calibrate` / `--no-calibrate`: Enable/Disable probability calibration (default: Enabled)
+### Python API
+
+```python
+from fraud_detection import FeatureEngineer, FraudModel, BusinessEvaluator
+
+# Feature engineering with strict fit/transform to prevent leakage
+fe = FeatureEngineer(smooth_m=50.0)
+train_df, cat_cols, num_cols = fe.create_base_features(train_df)
+fe.fit(train_df)
+train_df = fe.transform(train_df)
+
+# Value-weighted classifier training
+model = FraudModel()
+model.train_classifier(X_train, y_train, amounts_train, X_val, y_val, cat_idx)
+model.fit_calibrator(val_scores, y_val)
+
+# Business-aligned evaluation
+evaluator = BusinessEvaluator(review_capacity=400)
+metrics = evaluator.evaluate(test_df, model.predict(X_test))
+print(f"Uplift vs random: {metrics.uplift_vs_random_x:.1f}x")
+print(f"Fraud value captured: £{metrics.captured_value_gbp:,.2f}")
+```
+
+### CLI (legacy script)
+
+```bash
+python legacy/Fraud_detection.py --data-dir ./data --capacity 400
+```
+
+---
+
+## Key features
+
+| Feature | Detail |
+| :--- | :--- |
+| **Value-weighted loss** | Higher penalty for missing high-value fraud via log-amount scaling |
+| **Temporal validation** | Strict time-based train/val/test splits preventing data leakage |
+| **Risk encodings** | m-estimate smoothed fraud rates for high-cardinality categoricals |
+| **Velocity features** | Time-since-last transaction per account, merchant, and MCC |
+| **Isotonic calibration** | Maps raw scores to calibrated probabilities |
+| **EV regressor** | Direct expected-value regression as alternative to classifier |
+| **Model selection** | Automatic selection between classifier and regressor on validation |
+| **Executive reporting** | PowerPoint deck, EV curve plot, feature importance chart |
+
+## Development
+
+```bash
+make dev        # install with dev dependencies
+make test       # run pytest
+make lint       # run ruff
+make clean      # remove build artefacts
+```
 
 ## Outputs
 
-The script generates a `model_outputs/` directory containing:
-- **Fraud_detection.pptx**: Executive summary presentation.
-- **ev_curve.png**: Plot showing value captured vs. review capacity.
-- **feature_importance.png**: Visualization of top predictive features.
-- **metrics.json**: Detailed performance metrics (AUC, Uplift, Savings).
-- **predictions.csv**: Model scores and rankings for the test set.
+The legacy CLI generates a `model_outputs/` directory:
+- **Fraud_detection.pptx** — executive summary presentation
+- **ev_curve.png** — value captured versus review capacity
+- **feature_importance.png** — top predictive features
+- **metrics.json** — AUC, uplift, savings
+- **predictions.csv** — scored test set with monthly rankings
 
-## License
+---
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+*Created by [dsugurtuna](https://github.com/dsugurtuna)*
