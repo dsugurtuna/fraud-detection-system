@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from fraud_detection.features import FeatureEngineer, FeatureStores
+from fraud_detection.features import FeatureEngineer
 
 
 def _make_transactions(n: int = 200) -> pd.DataFrame:
