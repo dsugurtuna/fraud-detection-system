@@ -1,4 +1,4 @@
-.PHONY: install dev test lint clean
+.PHONY: install dev test lint format clean docker
 
 install:
 	pip install -e .
@@ -7,10 +7,20 @@ dev:
 	pip install -e ".[dev]"
 
 test:
-	pytest -v
+	pytest
 
 lint:
-	ruff check src/ tests/
+	ruff check .
+	ruff format --check .
+	mypy
+
+format:
+	ruff check --fix .
+	ruff format .
 
 clean:
-	rm -rf build/ dist/ *.egg-info src/*.egg-info __pycache__ .pytest_cache
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	rm -rf .pytest_cache .mypy_cache .ruff_cache build dist src/*.egg-info
+
+docker:
+	docker build -t fraud-detection-system .
