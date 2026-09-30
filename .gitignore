@@ -25,3 +25,5 @@ env/
 *.swp
 .DS_Store
 *.egg-info/
+.mypy_cache/
+.ruff_cache/
