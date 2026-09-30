@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from fraud_detection.features import FeatureEngineer
 
@@ -78,11 +79,8 @@ class TestAggregates:
     def test_transform_before_fit_raises(self):
         fe = FeatureEngineer()
         df = _make_transactions(10)
-        try:
+        with pytest.raises(RuntimeError):
             fe.transform(df)
-            assert False, "Should have raised"
-        except RuntimeError:
-            pass
 
 
 class TestVelocity:
@@ -93,3 +91,59 @@ class TestVelocity:
         assert "time_since_last_acc" in result.columns
         assert "time_since_last_mch" in result.columns
         assert "transactionTime" not in result.columns
+
+
+def test_velocity_uses_history_for_first_current_row():
+    hist = pd.DataFrame(
+        {
+            "accountNumber": ["A", "A"],
+            "merchantId": ["M", "M"],
+            "mcc": ["1", "1"],
+            "transactionTime": pd.to_datetime(["2024-01-01 00:00", "2024-01-01 01:00"]),
+        }
+    )
+    cur = pd.DataFrame(
+        {
+            "accountNumber": ["A", "B"],
+            "merchantId": ["M", "M"],
+            "mcc": ["1", "1"],
+            "transactionTime": pd.to_datetime(["2024-01-01 03:00", "2024-01-01 04:00"]),
+            "transactionAmount": [5.0, 6.0],
+        },
+        index=[100, 101],
+    )
+    out = FeatureEngineer.transform_velocity(cur, hist)
+    assert list(out.index) == [100, 101]
+    assert out.loc[100, "time_since_last_acc"] == 7200.0
+    assert out.loc[100, "time_since_last_mch"] == 7200.0
+    assert np.isnan(out.loc[101, "time_since_last_acc"])
+
+
+def test_categoricals_become_strings():
+    df = _make_transactions(10)
+    df["mcc"] = [5411] * 9 + [None]  # pandas stores this as float64
+    result, _, _ = FeatureEngineer.create_base_features(df)
+    assert result["mcc"].tolist() == ["5411"] * 9 + ["UNK"]
+
+
+def test_numeric_gaps_use_training_median():
+    train, _, _ = FeatureEngineer.create_base_features(_make_transactions(50))
+    fe = FeatureEngineer().fit(train)
+    test = train.head(3).copy()
+    test.loc[test.index[0], "availableCash"] = np.nan
+    out = fe.transform(test)
+    assert out.iloc[0]["availableCash"] == train["availableCash"].median()
+
+
+def test_training_risk_encoding_is_out_of_fold():
+    df = _make_transactions(200)
+    df.loc[0, "merchantId"] = "ONLY_ONCE"
+    df.loc[0, "isFraud"] = 1
+    df, _, _ = FeatureEngineer.create_base_features(df)
+    fe = FeatureEngineer(smooth_m=1.0).fit(df)
+    in_sample = fe.transform(df).loc[0, "merchantId_risk"]
+    oof = fe.transform_train(df, n_folds=5).loc[0, "merchantId_risk"]
+    # In-sample, the row's own fraud label raises its merchant's rate. Out of
+    # fold the merchant is unseen, so it falls back to the global rate.
+    assert in_sample > 0.5
+    assert oof < 0.5

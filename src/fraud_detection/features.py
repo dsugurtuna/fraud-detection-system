@@ -1,7 +1,9 @@
-"""Feature engineering module.
+"""Feature engineering for transaction fraud detection.
 
-Temporal, categorical, aggregate, and velocity features
-for transaction fraud detection.
+Temporal, categorical, aggregate, risk-encoding and velocity features. All
+statistics are fitted on the training period only. For the training rows
+themselves, :meth:`FeatureEngineer.transform_train` computes risk encodings
+out of fold, so no row's own label feeds into its features.
 """
 
 from __future__ import annotations
@@ -12,6 +14,19 @@ import numpy as np
 import pandas as pd
 
 SMOOTH_M = 50.0
+RISK_COLS = ["merchantId", "mcc", "merchantCountry", "posEntryMode"]
+NUMERIC_COLS = ["transactionAmount", "availableCash"]
+
+
+def _as_category(values: pd.Series) -> pd.Series:
+    """Categorical codes as strings, with ``UNK`` for missing values.
+
+    An integer code column with gaps is read by pandas as float (5411.0);
+    it is converted back to whole numbers so the code stays "5411".
+    """
+    if pd.api.types.is_float_dtype(values) and values.dropna().mod(1).eq(0).all():
+        values = values.astype("Int64")
+    return values.astype(object).where(values.notna(), "UNK").astype(str)
 
 
 @dataclass
@@ -76,16 +91,13 @@ class FeatureEngineer:
             "merchantZip",
             "posEntryMode",
         ]
-        df["merchantCountry"] = df["merchantCountry"].astype(str)
+        num_features = [c for c in NUMERIC_COLS if c in df.columns]
 
-        num_features: list[str] = []
-        for c in ["transactionAmount", "availableCash"]:
-            if c in df.columns:
-                num_features.append(c)
-
+        # CatBoost needs categorical values as strings (or ints), never floats,
+        # so fill missing values first and then cast.
         for c in cat_features:
             if c in df.columns:
-                df[c] = df[c].fillna("UNK")
+                df[c] = _as_category(df[c])
 
         return df, cat_features, num_features
 
@@ -139,12 +151,13 @@ class FeatureEngineer:
         gfr = max(1e-6, train_df["isFraud"].mean())
         stores.global_fraud_rate = gfr
 
-        for col in ["merchantId", "mcc", "merchantCountry", "posEntryMode"]:
+        for col in RISK_COLS:
             stores.risk_encodings[col] = self._smoothed_rate(
                 train_df, col, self.smooth_m, gfr
             )
 
-        stores.numeric_medians = train_df.median(numeric_only=True).to_dict()
+        present = [c for c in NUMERIC_COLS if c in train_df.columns]
+        stores.numeric_medians = train_df[present].median().to_dict()
         self.stores = stores
         return self
 
@@ -166,6 +179,11 @@ class FeatureEngineer:
             raise RuntimeError("Call fit() before transform().")
         df = df.copy()
         stores = self.stores
+
+        # Impute numeric gaps with training medians only.
+        for col, median in stores.numeric_medians.items():
+            if col in df.columns:
+                df[col] = df[col].fillna(median)
 
         # Account stats
         for col in [
@@ -199,11 +217,37 @@ class FeatureEngineer:
             )
 
         # Risk encodings
-        for col in ["merchantId", "mcc", "merchantCountry", "posEntryMode"]:
+        for col in RISK_COLS:
             risk_map = stores.risk_encodings.get(col, {})
             df[f"{col}_risk"] = df[col].map(risk_map).fillna(stores.global_fraud_rate)
 
         return df
+
+    def transform_train(
+        self, train_df: pd.DataFrame, n_folds: int = 5, seed: int = 0
+    ) -> pd.DataFrame:
+        """Transform the training rows with out-of-fold risk encodings.
+
+        Plain :meth:`transform` on the training set would encode each
+        merchant's fraud rate using the very rows being labelled, which leaks
+        the target into the features and makes the model over-trust them.
+        Here each fold's risk encodings come from the other folds only. The
+        other aggregates carry no labels and are unchanged.
+        """
+        out = self.transform(train_df)
+        if n_folds < 2:
+            return out
+        folds = np.random.default_rng(seed).integers(0, n_folds, len(train_df))
+        for k in range(n_folds):
+            rest = train_df[folds != k]
+            gfr = max(1e-6, float(rest["isFraud"].mean()))
+            for col in RISK_COLS:
+                rates = self._smoothed_rate(rest, col, self.smooth_m, gfr)
+                in_fold = folds == k
+                out.loc[in_fold, f"{col}_risk"] = (
+                    train_df.loc[in_fold, col].map(rates).fillna(gfr).to_numpy()
+                )
+        return out
 
     # ------------------------------------------------------------------
     # Velocity features
@@ -212,35 +256,32 @@ class FeatureEngineer:
     def transform_velocity(
         df: pd.DataFrame, historical_df: pd.DataFrame
     ) -> pd.DataFrame:
-        """Compute velocity features using only historical transactions."""
-        hist_cols = ["accountNumber", "merchantId", "mcc", "transactionTime"]
-        hist_subset = historical_df[hist_cols].copy()
-        df_subset = df[hist_cols].copy()
-        df_index = df.index
+        """Seconds since the previous transaction by account, merchant and MCC.
 
-        combined = pd.concat([hist_subset, df_subset], axis=0, ignore_index=True)
-        combined = combined.sort_values(["accountNumber", "transactionTime"])
-        combined["time_since_last_acc"] = (
-            combined.groupby("accountNumber")["transactionTime"]
-            .diff()
-            .dt.total_seconds()
-        )
-        combined = combined.sort_values(
-            ["accountNumber", "merchantId", "transactionTime"]
-        )
-        combined["time_since_last_mch"] = (
-            combined.groupby(["accountNumber", "merchantId"])["transactionTime"]
-            .diff()
-            .dt.total_seconds()
-        )
-        combined = combined.sort_values(["accountNumber", "mcc", "transactionTime"])
-        combined["time_since_last_mcc"] = (
-            combined.groupby(["accountNumber", "mcc"])["transactionTime"]
-            .diff()
-            .dt.total_seconds()
-        )
-        vel = combined.loc[
-            df_index,
-            ["time_since_last_acc", "time_since_last_mch", "time_since_last_mcc"],
-        ]
+        ``historical_df`` supplies earlier transactions (for example the
+        training period) so the first transactions in ``df`` are not all
+        missing. Rows of ``df`` are matched back by position, so any index
+        works, and a historical row at the same timestamp sorts first.
+        """
+        cols = ["accountNumber", "merchantId", "mcc", "transactionTime"]
+        hist = historical_df[cols].assign(_current=0, _pos=-1)
+        cur = df[cols].assign(_current=1, _pos=np.arange(len(df)))
+        combined = pd.concat([hist, cur], axis=0, ignore_index=True)
+
+        groups = {
+            "time_since_last_acc": ["accountNumber"],
+            "time_since_last_mch": ["accountNumber", "merchantId"],
+            "time_since_last_mcc": ["accountNumber", "mcc"],
+        }
+        for name, keys in groups.items():
+            combined = combined.sort_values(
+                [*keys, "transactionTime", "_current"], kind="mergesort"
+            )
+            combined[name] = (
+                combined.groupby(keys)["transactionTime"].diff().dt.total_seconds()
+            )
+
+        current = combined[combined["_current"] == 1].sort_values("_pos")
+        vel = pd.DataFrame(current[list(groups)].to_numpy(), columns=list(groups))
+        vel.index = df.index
         return pd.concat([df.drop(columns=["transactionTime"]), vel], axis=1)
