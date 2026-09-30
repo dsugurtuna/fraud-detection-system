@@ -140,10 +140,10 @@ class BusinessEvaluator:
         """Generate EV curve across review capacity levels."""
         rows = []
         for k in k_list:
-            saved = self.review_capacity
-            self.review_capacity = k
-            m = self.evaluate(df_test, scores, is_ev_regressor=is_ev_regressor)
-            self.review_capacity = saved
+            # A fresh evaluator per capacity: no temporary mutation of self.
+            m = BusinessEvaluator(k).evaluate(
+                df_test, scores, is_ev_regressor=is_ev_regressor
+            )
             rows.append(
                 {
                     "K": k,
