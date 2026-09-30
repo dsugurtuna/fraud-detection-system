@@ -7,7 +7,6 @@ and direct expected-value regressor for comparison.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 import numpy as np
 
@@ -39,7 +38,7 @@ class FraudModel:
         Training parameters.
     """
 
-    def __init__(self, config: Optional[TrainConfig] = None) -> None:
+    def __init__(self, config: TrainConfig | None = None) -> None:
         self.config = config or TrainConfig()
         self.classifier = None
         self.regressor = None
@@ -64,9 +63,7 @@ class FraudModel:
         }
 
     @staticmethod
-    def _value_weights(
-        y: np.ndarray, amounts: np.ndarray, exp: float
-    ) -> np.ndarray:
+    def _value_weights(y: np.ndarray, amounts: np.ndarray, exp: float) -> np.ndarray:
         """Compute value-weighted sample weights."""
         fraud_rate = max(1e-6, float(np.mean(y)))
         base_pos = (1.0 - fraud_rate) / fraud_rate
@@ -82,7 +79,7 @@ class FraudModel:
         amounts_tr: np.ndarray,
         X_val: np.ndarray,
         y_val: np.ndarray,
-        cat_idx: List[int],
+        cat_idx: list[int],
     ) -> None:
         """Train value-weighted CatBoost classifier."""
         from catboost import CatBoostClassifier
@@ -91,7 +88,8 @@ class FraudModel:
         params = self._build_catboost_params(loss="Logloss", metric="AUC")
         self.classifier = CatBoostClassifier(**params)
         self.classifier.fit(
-            X_tr, y_tr,
+            X_tr,
+            y_tr,
             eval_set=(X_val, y_val),
             cat_features=cat_idx,
             sample_weight=weights,
@@ -104,7 +102,7 @@ class FraudModel:
         y_ev_tr: np.ndarray,
         X_val: np.ndarray,
         y_ev_val: np.ndarray,
-        cat_idx: List[int],
+        cat_idx: list[int],
     ) -> None:
         """Train direct expected-value regressor."""
         from catboost import CatBoostRegressor
@@ -112,15 +110,14 @@ class FraudModel:
         params = self._build_catboost_params(loss="RMSE", metric="RMSE")
         self.regressor = CatBoostRegressor(**params)
         self.regressor.fit(
-            X_tr, y_ev_tr,
+            X_tr,
+            y_ev_tr,
             eval_set=(X_val, y_ev_val),
             cat_features=cat_idx,
             verbose=False,
         )
 
-    def fit_calibrator(
-        self, val_scores: np.ndarray, y_val: np.ndarray
-    ) -> None:
+    def fit_calibrator(self, val_scores: np.ndarray, y_val: np.ndarray) -> None:
         """Fit isotonic calibration on validation scores."""
         from sklearn.isotonic import IsotonicRegression
 

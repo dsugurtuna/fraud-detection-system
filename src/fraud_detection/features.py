@@ -7,11 +7,9 @@ for transaction fraud detection.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-
 
 SMOOTH_M = 50.0
 
@@ -20,12 +18,12 @@ SMOOTH_M = 50.0
 class FeatureStores:
     """Pre-computed aggregate stores fitted on training data."""
 
-    account_stats: Dict[str, Dict[str, float]] = field(default_factory=dict)
-    merchant_stats: Dict[str, Dict[str, float]] = field(default_factory=dict)
-    mcc_stats: Dict[str, Dict[str, float]] = field(default_factory=dict)
-    risk_encodings: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    account_stats: dict[str, dict[str, float]] = field(default_factory=dict)
+    merchant_stats: dict[str, dict[str, float]] = field(default_factory=dict)
+    mcc_stats: dict[str, dict[str, float]] = field(default_factory=dict)
+    risk_encodings: dict[str, dict[str, float]] = field(default_factory=dict)
     global_fraud_rate: float = 0.0
-    numeric_medians: Dict[str, float] = field(default_factory=dict)
+    numeric_medians: dict[str, float] = field(default_factory=dict)
 
 
 class FeatureEngineer:
@@ -42,12 +40,16 @@ class FeatureEngineer:
 
     def __init__(self, smooth_m: float = SMOOTH_M) -> None:
         self.smooth_m = smooth_m
-        self.stores: Optional[FeatureStores] = None
+        self.stores: FeatureStores | None = None
         self.cat_features = [
-            "accountNumber", "merchantId", "mcc",
-            "merchantCountry", "merchantZip", "posEntryMode",
+            "accountNumber",
+            "merchantId",
+            "mcc",
+            "merchantCountry",
+            "merchantZip",
+            "posEntryMode",
         ]
-        self.num_features: List[str] = []
+        self.num_features: list[str] = []
 
     # ------------------------------------------------------------------
     # Base features
@@ -55,7 +57,7 @@ class FeatureEngineer:
     @staticmethod
     def create_base_features(
         df: pd.DataFrame,
-    ) -> Tuple[pd.DataFrame, List[str], List[str]]:
+    ) -> tuple[pd.DataFrame, list[str], list[str]]:
         """Create temporal and categorical base features."""
         df = df.copy()
         df["hour"] = df["transactionTime"].dt.hour
@@ -67,12 +69,16 @@ class FeatureEngineer:
         df["logAmount"] = np.log1p(df["transactionAmount"])
 
         cat_features = [
-            "accountNumber", "merchantId", "mcc",
-            "merchantCountry", "merchantZip", "posEntryMode",
+            "accountNumber",
+            "merchantId",
+            "mcc",
+            "merchantCountry",
+            "merchantZip",
+            "posEntryMode",
         ]
         df["merchantCountry"] = df["merchantCountry"].astype(str)
 
-        num_features: List[str] = []
+        num_features: list[str] = []
         for c in ["transactionAmount", "availableCash"]:
             if c in df.columns:
                 num_features.append(c)
@@ -86,35 +92,47 @@ class FeatureEngineer:
     # ------------------------------------------------------------------
     # Aggregates (fit / transform)
     # ------------------------------------------------------------------
-    def fit(self, train_df: pd.DataFrame) -> "FeatureEngineer":
+    def fit(self, train_df: pd.DataFrame) -> FeatureEngineer:
         """Fit aggregate stores on training data."""
         stores = FeatureStores()
 
         # Account-level statistics
-        acc = train_df.groupby("accountNumber").agg(
-            acc_mean=("transactionAmount", "mean"),
-            acc_std=("transactionAmount", "std"),
-            acc_max=("transactionAmount", "max"),
-            acc_count=("transactionAmount", "count"),
-            acc_merchants=("merchantId", "nunique"),
-            acc_mccs=("mcc", "nunique"),
-        ).fillna(0)
+        acc = (
+            train_df.groupby("accountNumber")
+            .agg(
+                acc_mean=("transactionAmount", "mean"),
+                acc_std=("transactionAmount", "std"),
+                acc_max=("transactionAmount", "max"),
+                acc_count=("transactionAmount", "count"),
+                acc_merchants=("merchantId", "nunique"),
+                acc_mccs=("mcc", "nunique"),
+            )
+            .fillna(0)
+        )
         stores.account_stats = acc.to_dict(orient="index")
 
         # Merchant statistics
-        mch = train_df.groupby("merchantId").agg(
-            mean_amount=("transactionAmount", "mean"),
-            std_amount=("transactionAmount", "std"),
-            tx_count=("transactionAmount", "count"),
-        ).fillna(0)
+        mch = (
+            train_df.groupby("merchantId")
+            .agg(
+                mean_amount=("transactionAmount", "mean"),
+                std_amount=("transactionAmount", "std"),
+                tx_count=("transactionAmount", "count"),
+            )
+            .fillna(0)
+        )
         stores.merchant_stats = mch.to_dict(orient="index")
 
         # MCC statistics
-        mcc = train_df.groupby("mcc").agg(
-            mean_amount=("transactionAmount", "mean"),
-            std_amount=("transactionAmount", "std"),
-            tx_count=("transactionAmount", "count"),
-        ).fillna(0)
+        mcc = (
+            train_df.groupby("mcc")
+            .agg(
+                mean_amount=("transactionAmount", "mean"),
+                std_amount=("transactionAmount", "std"),
+                tx_count=("transactionAmount", "count"),
+            )
+            .fillna(0)
+        )
         stores.mcc_stats = mcc.to_dict(orient="index")
 
         # Smoothed risk encodings
@@ -133,7 +151,7 @@ class FeatureEngineer:
     @staticmethod
     def _smoothed_rate(
         df: pd.DataFrame, col: str, m: float, global_rate: float
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         grp = (
             df.groupby(col)["isFraud"]
             .agg(["sum", "count"])
@@ -150,22 +168,35 @@ class FeatureEngineer:
         stores = self.stores
 
         # Account stats
-        for col in ["acc_mean", "acc_std", "acc_max", "acc_count", "acc_merchants", "acc_mccs"]:
-            df[col] = df["accountNumber"].map(
-                {k: v.get(col, 0) for k, v in stores.account_stats.items()}
-            ).fillna(0)
+        for col in [
+            "acc_mean",
+            "acc_std",
+            "acc_max",
+            "acc_count",
+            "acc_merchants",
+            "acc_mccs",
+        ]:
+            df[col] = (
+                df["accountNumber"]
+                .map({k: v.get(col, 0) for k, v in stores.account_stats.items()})
+                .fillna(0)
+            )
 
         # Merchant stats
         for col in ["mean_amount", "std_amount", "tx_count"]:
-            df[f"mch_{col}"] = df["merchantId"].map(
-                {k: v.get(col, 0) for k, v in stores.merchant_stats.items()}
-            ).fillna(0)
+            df[f"mch_{col}"] = (
+                df["merchantId"]
+                .map({k: v.get(col, 0) for k, v in stores.merchant_stats.items()})
+                .fillna(0)
+            )
 
         # MCC stats
         for col in ["mean_amount", "std_amount", "tx_count"]:
-            df[f"mcc_{col}"] = df["mcc"].map(
-                {k: v.get(col, 0) for k, v in stores.mcc_stats.items()}
-            ).fillna(0)
+            df[f"mcc_{col}"] = (
+                df["mcc"]
+                .map({k: v.get(col, 0) for k, v in stores.mcc_stats.items()})
+                .fillna(0)
+            )
 
         # Risk encodings
         for col in ["merchantId", "mcc", "merchantCountry", "posEntryMode"]:
@@ -194,7 +225,9 @@ class FeatureEngineer:
             .diff()
             .dt.total_seconds()
         )
-        combined = combined.sort_values(["accountNumber", "merchantId", "transactionTime"])
+        combined = combined.sort_values(
+            ["accountNumber", "merchantId", "transactionTime"]
+        )
         combined["time_since_last_mch"] = (
             combined.groupby(["accountNumber", "merchantId"])["transactionTime"]
             .diff()

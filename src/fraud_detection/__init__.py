@@ -2,9 +2,9 @@
 
 __version__ = "2.0.0"
 
+from .evaluation import BusinessEvaluator, EvaluationMetrics
 from .features import FeatureEngineer
 from .model import FraudModel
-from .evaluation import BusinessEvaluator, EvaluationMetrics
 
 __all__ = [
     "FeatureEngineer",

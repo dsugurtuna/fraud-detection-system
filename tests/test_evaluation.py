@@ -11,11 +11,13 @@ def _make_test_data(n: int = 100) -> pd.DataFrame:
     dates = pd.date_range("2024-06-01", periods=n, freq="h")
     n_fraud = max(1, n // 10)
     labels = [0] * (n - n_fraud) + [1] * n_fraud
-    return pd.DataFrame({
-        "transactionTime": dates,
-        "transactionAmount": rng.uniform(10, 500, n),
-        "isFraud": labels,
-    })
+    return pd.DataFrame(
+        {
+            "transactionTime": dates,
+            "transactionAmount": rng.uniform(10, 500, n),
+            "isFraud": labels,
+        }
+    )
 
 
 class TestBusinessEvaluator:

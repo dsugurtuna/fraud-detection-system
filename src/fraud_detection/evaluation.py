@@ -7,7 +7,6 @@ baseline, expected-value curve generation.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List
 
 import numpy as np
 import pandas as pd
@@ -26,7 +25,7 @@ class EvaluationMetrics:
     improvement_gbp: float = 0.0
     uplift_vs_random_x: float = 0.0
 
-    def to_dict(self) -> Dict[str, float]:
+    def to_dict(self) -> dict[str, float]:
         return {
             "roc_auc": self.roc_auc,
             "pr_auc": self.pr_auc,
@@ -55,9 +54,7 @@ class BusinessEvaluator:
         self.review_capacity = review_capacity
 
     @staticmethod
-    def _monthly_top_n_value(
-        df: pd.DataFrame, ev_col: str, n_per_month: int
-    ) -> float:
+    def _monthly_top_n_value(df: pd.DataFrame, ev_col: str, n_per_month: int) -> float:
         """Total fraud value captured by reviewing top-N per month."""
         df = df.copy()
         df["_ym"] = df["transactionTime"].dt.to_period("M")
@@ -100,7 +97,7 @@ class BusinessEvaluator:
         is_ev_regressor : bool
             If True, scores are treated as direct expected values.
         """
-        from sklearn.metrics import roc_auc_score, average_precision_score
+        from sklearn.metrics import average_precision_score, roc_auc_score
 
         tmp = df_test.copy()
         tmp["score"] = scores
@@ -115,7 +112,9 @@ class BusinessEvaluator:
             prauc = float(average_precision_score(tmp["isFraud"], tmp["score"]))
 
         months = tmp["transactionTime"].dt.to_period("M").nunique()
-        captured = self._monthly_top_n_value(tmp, "expected_value", self.review_capacity)
+        captured = self._monthly_top_n_value(
+            tmp, "expected_value", self.review_capacity
+        )
         baseline = self._random_baseline(tmp, self.review_capacity)
         uplift = captured / max(1e-9, baseline)
 
@@ -134,7 +133,7 @@ class BusinessEvaluator:
         self,
         df_test: pd.DataFrame,
         scores: np.ndarray,
-        k_list: List[int],
+        k_list: list[int],
         *,
         is_ev_regressor: bool = False,
     ) -> pd.DataFrame:
@@ -145,10 +144,12 @@ class BusinessEvaluator:
             self.review_capacity = k
             m = self.evaluate(df_test, scores, is_ev_regressor=is_ev_regressor)
             self.review_capacity = saved
-            rows.append({
-                "K": k,
-                "captured": m.captured_value_gbp,
-                "baseline": m.baseline_random_value_gbp,
-                "uplift_x": m.uplift_vs_random_x,
-            })
+            rows.append(
+                {
+                    "K": k,
+                    "captured": m.captured_value_gbp,
+                    "baseline": m.baseline_random_value_gbp,
+                    "uplift_x": m.uplift_vs_random_x,
+                }
+            )
         return pd.DataFrame(rows)

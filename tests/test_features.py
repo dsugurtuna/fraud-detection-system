@@ -10,19 +10,21 @@ def _make_transactions(n: int = 200) -> pd.DataFrame:
     """Generate synthetic transaction data."""
     rng = np.random.default_rng(42)
     dates = pd.date_range("2024-01-01", periods=n, freq="h")
-    df = pd.DataFrame({
-        "eventId": range(n),
-        "transactionTime": dates,
-        "transactionAmount": rng.exponential(50, n),
-        "availableCash": rng.uniform(0, 5000, n),
-        "accountNumber": rng.choice(["A001", "A002", "A003"], n),
-        "merchantId": rng.choice(["M01", "M02", "M03"], n),
-        "mcc": rng.choice(["5411", "5812", "7011"], n),
-        "merchantCountry": rng.choice(["GB", "US", "DE"], n),
-        "merchantZip": rng.choice(["CB1", "CB2", "SW1"], n),
-        "posEntryMode": rng.choice(["chip", "swipe", "online"], n),
-        "isFraud": rng.choice([0, 0, 0, 0, 0, 0, 0, 0, 0, 1], n),
-    })
+    df = pd.DataFrame(
+        {
+            "eventId": range(n),
+            "transactionTime": dates,
+            "transactionAmount": rng.exponential(50, n),
+            "availableCash": rng.uniform(0, 5000, n),
+            "accountNumber": rng.choice(["A001", "A002", "A003"], n),
+            "merchantId": rng.choice(["M01", "M02", "M03"], n),
+            "mcc": rng.choice(["5411", "5812", "7011"], n),
+            "merchantCountry": rng.choice(["GB", "US", "DE"], n),
+            "merchantZip": rng.choice(["CB1", "CB2", "SW1"], n),
+            "posEntryMode": rng.choice(["chip", "swipe", "online"], n),
+            "isFraud": rng.choice([0, 0, 0, 0, 0, 0, 0, 0, 0, 1], n),
+        }
+    )
     return df
 
 
